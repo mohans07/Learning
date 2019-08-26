@@ -1,32 +1,44 @@
 import static org.common.Utilities.*
 import static org.common.Constants.*
 
-def call(String APPLICATION_NAME, String CHANGE_ID, Boolean IsBranch) {
+def call(String APPLICATION_NAME) {
 	pipeline {
 		agent any
 		stages {
-			stage('Build Pull Request') {
-       when {
-							equals expected: 'TRUE', actual: IsBranch
-						}
+			stage('Build/Prompt Pull Request') {
 				steps {
 					script{
-						env.APPLICATION_NAME="$APPLICATION_NAME"
-						env.BUILD_ID="BLD-$BUILD_ID"
-						env.CHANGE_ID="$CHANGE_ID-$BUILD_ID"
-						sendMessage this,"Build Started - ${env.JOB_NAME}-${BUILD_ID} (<${env.BUILD_URL}|Open>)"
+						env.APPLICATION_NAME ="$APPLICATION_NAME"
+						if(!env.CHANGE_ID){
+							timeout(time: 30, unit: 'MINUTES') {
+								script{
+									def OBJECT = input message: "Please enter your deployment details", ok: "Continue", parameters: [
+										string(name: 'CHANGE_ID', defaultValue: '', description: 'Enter the pull request number'),
+										string(name: 'BUILD_ID', defaultValue: '', description: 'Enter the build id')
+									]
+									if(OBJECT.CHANGE_ID != '' && OBJECT.BUILD_ID != ''){
+										env.BUILD_ID ="BLD-${OBJECT.BUILD_ID}"
+										env.CHANGE_ID = "${OBJECT.CHANGE_ID}-$BUILD_ID"
+										sendMessage this,"Build Skipped - ${env.JOB_NAME}-${BUILD_ID} (<${env.BUILD_URL}|Open>)"
+									} else {
+										sendMessage this,"Please give valid input! - ${env.JOB_NAME}-${BUILD_ID} (<${env.BUILD_URL}|Open>)"
+									}
+								}
+							}	
+						} else {
+							env.BUILD_ID = "BLD-${env.BUILD_ID}"
+							env.CHANGE_ID = "${env.CHANGE_ID}-$BUILD_ID"
+							sendMessage this,"Build Started - ${env.JOB_NAME}-${BUILD_ID} (<${env.BUILD_URL}|Open>)"
+							sh '''
+								echo "docker build --force-rm -t ${REGISTRY}/${APPLICATION_NAME}:PR-${CHANGE_ID} ."
+								set +x
+								docker build --force-rm --build-arg SSH_PRIVATE_KEY="$(cat ~/.ssh/id_rsa)" -t ${REGISTRY}/${APPLICATION_NAME}:PR-${CHANGE_ID} .
+								set -x
+								docker push ${REGISTRY}/${APPLICATION_NAME}:PR-${CHANGE_ID}
+								docker rmi ${REGISTRY}/${APPLICATION_NAME}:PR-${CHANGE_ID}'''
+							sendMessage this,"Build Finished - ${env.JOB_NAME}-${BUILD_ID} (<${env.BUILD_URL}|Open>)"
+						}
 					}
-					sh '''
-						echo "docker build --force-rm -t ${REGISTRY}/${APPLICATION_NAME}:PR-${CHANGE_ID} ."
-						set +x
-						docker build --force-rm --build-arg SSH_PRIVATE_KEY="$(cat ~/.ssh/id_rsa)" -t ${REGISTRY}/${APPLICATION_NAME}:PR-${CHANGE_ID} .
-						set -x
-						docker push ${REGISTRY}/${APPLICATION_NAME}:PR-${CHANGE_ID}
-						docker rmi ${REGISTRY}/${APPLICATION_NAME}:PR-${CHANGE_ID}'''
-					script{
-						sendMessage this,"Build Finished - ${env.JOB_NAME}-${BUILD_ID} (<${env.BUILD_URL}|Open>)"
-					}
-
 				}
 			}
 			stage('Select Env to Deploy'){
